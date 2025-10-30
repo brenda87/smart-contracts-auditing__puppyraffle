@@ -16,11 +16,7 @@ contract PuppyRaffleTest is Test {
     uint256 duration = 1 days;
 
     function setUp() public {
-        puppyRaffle = new PuppyRaffle(
-            entranceFee,
-            feeAddress,
-            duration
-        );
+        puppyRaffle = new PuppyRaffle(entranceFee, feeAddress, duration);
     }
 
     //////////////////////
@@ -73,6 +69,40 @@ contract PuppyRaffleTest is Test {
         players[2] = playerOne;
         vm.expectRevert("PuppyRaffle: Duplicate player");
         puppyRaffle.enterRaffle{value: entranceFee * 3}(players);
+    }
+
+    function testDenialOfServicerRiskWithManyPlayers() public {
+        // gas price set to 1 gwei for easier calculation
+        vm.txGasPrice(1);
+        // create a large batch of players
+        uint256 playersNum = 100;
+        address[] memory players = new address[](playersNum);
+        for (uint256 i = 0; i < playersNum; i++) {
+            players[i] = address(uint160(i + 1));
+        }
+        // measure gas usage
+        uint256 gasStart = gasleft();
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players);
+        uint256 gasEnd = gasleft();
+
+        uint256 gasUsedFirst = (gasStart - gasEnd) * tx.gasprice;
+        console.log("Gas used to enter raffle with 100 players:", gasUsedFirst);
+
+        // second batch
+
+        address[] memory players2 = new address[](playersNum);
+        for (uint256 i = 0; i < playersNum; i++) {
+            players2[i] = address(uint160(i + 101));
+        }
+        uint256 gasStart2 = gasleft();
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players2);
+        uint256 gasEnd2 = gasleft();
+
+        uint256 gasUsedSecond = (gasStart2 - gasEnd2) * tx.gasprice;
+
+        console.log("Gas used to enter raffle with 100 players again:", gasUsedSecond);
+
+        assert(gasUsedSecond > gasUsedFirst);
     }
 
     //////////////////////
