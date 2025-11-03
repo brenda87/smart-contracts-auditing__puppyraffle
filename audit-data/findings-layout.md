@@ -1,4 +1,3 @@
-
 ### [S-#] TITLE (Root Cause + Impact)
 
 **Description:** 
