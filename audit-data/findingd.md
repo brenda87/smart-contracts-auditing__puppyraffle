@@ -212,3 +212,26 @@ contract ReentrancyAttacker {
 + import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 ```
 
+### [H-2] Weak Randomness in Winner Selection (Predictable Outcome via Block Variables)
+
+**Description:** The contract determines the raffle winner using the following line:
+```javascript
+uint256 winnerIndex =
+    uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+```
+This approach relies on block variables (block.timestamp and block.difficulty) and user-controlled input (msg.sender) to generate randomness.
+These values are predictable or manipulable by miners and users, meaning the resulting random number can be influenced or even predicted off-chain.
+An attacker could repeatedly call the function or front-run transactions until a favorable outcome is produced (e.g., ensuring they win the raffle).
+
+**Impact:**  An attacker can manipulate the winner selection process, resulting in an unfair raffle where they consistently win or significantly increase their chances of winning. This undermines the contract’s integrity and fairness, potentially leading to loss of trust or financial losses for legitimate players.
+
+**Proof of Concept:**
+- The attacker monitors the blockchain for when the raffle is about to be closed.
+- They simulate the keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty)) computation off-chain using possible timestamp and difficulty values.
+- The attacker submits their transaction when the predicted output of the hash gives a favorable modulo result — ensuring they become the selected winner.
+Because msg.sender is included in the hash, the attacker can easily tweak their address (by using a new contract address or a CREATE2 deployment) to brute-force a winning outcome.
+
+**Recommended Mitigation:**  Use a verifiable source of randomness, such as Chainlink VRF (Verifiable Random Function) or another commit-reveal mechanism.
+
+
+
