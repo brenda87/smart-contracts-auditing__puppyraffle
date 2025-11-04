@@ -229,6 +229,40 @@ contract PuppyRaffleTest is Test {
         assertEq(puppyRaffle.tokenURI(0), expectedTokenUri);
     }
 
+    function testTotalFeesOverflow() public playersEntered {
+        // We finish a raffle of 4 to collect some fees
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+        uint256 startingTotalFees = puppyRaffle.totalFees();
+        // startingTotalFees = 800000000000000000
+
+        // We then have 89 players enter a new raffle
+        uint256 playersNum = 89;
+        address[] memory players = new address[](playersNum);
+        for (uint256 i = 0; i < playersNum; i++) {
+            players[i] = address(i);
+        }
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players);
+        // We end the raffle
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+
+        // And here is where the issue occurs
+        // We will now have fewer fees even though we just finished a second raffle
+        puppyRaffle.selectWinner();
+
+        uint256 endingTotalFees = puppyRaffle.totalFees();
+        console2.log("ending total fees", endingTotalFees);
+        console2.log("starting total fees", startingTotalFees);
+        assert(endingTotalFees < startingTotalFees);
+
+        // We are also unable to withdraw any fees because of the require check
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+
+
     //////////////////////
     /// withdrawFees         ///
     /////////////////////
