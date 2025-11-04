@@ -233,5 +233,67 @@ Because msg.sender is included in the hash, the attacker can easily tweak their 
 
 **Recommended Mitigation:**  Use a verifiable source of randomness, such as Chainlink VRF (Verifiable Random Function) or another commit-reveal mechanism.
 
+### [M-#] Integer Overflow in Fee Accumulation (Incorrect Accounting + Potential Fund Loss)
+
+**Description:** The contract accumulates collected fees using a fixed-width `uint64` in the following statement:
+```javascript
+totalFees = totalFees + uint64(fee);
+```
+This introduces a classic integer overflow vulnerability. When `totalFees` grows large enough that adding another fee pushes it past the maximum value storable in a 64-bit unsigned integer (2^64 - 1), it will wrap around to zero instead of reverting. As a result, the contract’s internal accounting will report a drastically smaller totalFees even though additional fees were successfully collected.
+
+This overflow causes incorrect fee tracking and may prevent legitimate withdrawal of accumulated funds. Attackers or even normal users can trigger this state simply by participating in multiple raffles over time.
+
+**Impact:** 
+- Financial loss or misaccounting: Accumulated fees become smaller than the actual value collected.
+- Permanent loss of withdrawable funds: The wrapped-around value may cause withdrawal logic to fail or lock up the contract.
+- Integrity risk: The contract’s accounting becomes unreliable and may break fee distribution or refund logic.
+
+**Proof of Concept:**
+A simplified Forge test demonstrates the overflow effect:
+
+<details>
+<summary>PoC</summary>
+Place the following test into `PuppleRaffleTest.t.sol`
+
+```javascript
+    function testTotalFeesOverflow() public playersEntered {
+        // We finish a raffle of 4 to collect some fees
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+        uint256 startingTotalFees = puppyRaffle.totalFees();
+        // startingTotalFees = 800000000000000000
+
+        // We then have 89 players enter a new raffle
+        uint256 playersNum = 89;
+        address[] memory players = new address[](playersNum);
+        for (uint256 i = 0; i < playersNum; i++) {
+            players[i] = address(i);
+        }
+        puppyRaffle.enterRaffle{value: entranceFee * playersNum}(players);
+        // We end the raffle
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+
+        // And here is where the issue occurs
+        // We will now have fewer fees even though we just finished a second raffle
+        puppyRaffle.selectWinner();
+
+        uint256 endingTotalFees = puppyRaffle.totalFees();
+        console2.log("ending total fees", endingTotalFees);
+        console2.log("starting total fees", startingTotalFees);
+        assert(endingTotalFees < startingTotalFees);
+
+        // We are also unable to withdraw any fees because of the require check
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+```
+
+</details>
+
+**Recommended Mitigation:** 
+- Use newer versions of solidity, >0.8.0
+- Use a bigger uint type
 
 
