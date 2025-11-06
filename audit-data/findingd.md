@@ -110,10 +110,18 @@ Alternatively, you could use [OpenZeppelin's `EnumerableSet` library](https://do
 This allows a malicious player to exploit reentrancy by triggering the refund() function multiple times through a fallback or receive() function, draining multiple refunds before the player’s entry is cleared from the players array.
 
 ```javascript
-@>    //audit reentrancy attack, the contracts sends eth before removing the player, add nonreentranct from openzeppelin
-    payable(msg.sender).sendValue(entranceFee);
+        function refund(uint256 playerIndex) public {
+        address playerAddress = players[playerIndex];
+        require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+        require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+        
+        //audit reentrancy attack, the contracts sends eth before removing the player, add nonreentranct from openzeppelin
+@>      payable(msg.sender).sendValue(entranceFee);
 
-    players[playerIndex] = address(0);
+@>      players[playerIndex] = address(0);
+        //audit-low evnt can be manipulated
+        emit RaffleRefunded(playerAddress);
+    }
 ```
 
 **Impact:**  A malicious user could repeatedly trigger the refund process to receive multiple refunds for a single entry, leading to a loss of contract funds and denial of service for other legitimate players.
@@ -194,16 +202,19 @@ contract ReentrancyAttacker {
 
 **Recommended Mitigation:** 
 
-- Update the contract’s state before performing external calls:
+- Update the contract’s state before performing external calls. Additionally, we move event emission up as well.
 
 ```diff
--  payable(msg.sender).sendValue(entranceFee);
--  players[playerIndex] = address(0);
-```
-
-```diff
-+ players[playerIndex] = address(0);
-+ payable(msg.sender).sendValue(entranceFee);
+        function refund(uint256 playerIndex) public {
+        address playerAddress = players[playerIndex];
+        require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+        require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
++       players[playerIndex] = address(0);
++       emit RaffleRefunded(playerAddress);
+        payable(msg.sender).sendValue(entranceFee);
+-       players[playerIndex] = address(0);
+-       emit RaffleRefunded(playerAddress);
+    }
 ```
 
 - Apply the nonReentrant modifier from OpenZeppelin’s ReentrancyGuard to prevent nested calls.
