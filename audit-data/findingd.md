@@ -394,6 +394,34 @@ effectively locking all legitimate funds in the contract.
 
 ```
 
+### [I-4] `PuppleRaffle::selectWinner` does not follow CEI, which is not the best practice
+
+It's best to keep code clean and follow CEI(checks, effects and interactions)
+
+```diff
+-   (bool success,) = winner.call{value: prizePool}("");
+-   require(success, "PuppyRaffle: Failed to send prize pool to winner");
+    _safeMint(winner, tokenId);
++   (bool success,) = winner.call{value: prizePool}("");
++   require(success, "PuppyRaffle: Failed to send prize pool to winner");
+```
+
+### [I-5] Use of magic numbers is discouraged
+
+It can be confusing to see numbers in a codebase, it's much more readable if numbers are given a name.
+
+```javascript
+        uint256 prizePool = (totalAmountCollected * 80) / 100;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+```
+
+Instead you could use
+
+```diff
++    uint256 public constant PRIZE_POOL_PERCENTAGE = 80;
++    uint256 public constant FEE_PERCENTAGE = 20;
++    uint256 public constant POOL_PRECISION = 100;
+```
 
 
 
